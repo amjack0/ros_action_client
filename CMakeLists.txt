@@ -134,7 +134,7 @@ catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES ros_action_client
    LIBRARIES  ${orocos_kdl_LIBRARIES} #jointspace
-   CATKIN_DEPENDS actionlib control_msgs geometry_msgs jointspace sensor_msgs roscpp ros_action_server
+   CATKIN_DEPENDS actionlib control_msgs geometry_msgs jointspace ros_action_server sensor_msgs roscpp ros_action_server
 #  DEPENDS system_lib
 )
 
@@ -175,6 +175,7 @@ add_executable(${PROJECT_NAME}_node src/action_client.cpp)
 ## same as for the library above
 add_dependencies(${PROJECT_NAME}_node
   jointspace_generate_messages_cpp
+  ros_action_server_generate_messages_cpp
   ${${PROJECT_NAME}_EXPORTED_TARGETS}
   ${catkin_EXPORTED_TARGETS}
   #${PROJECT_NAME}_node jointspace
