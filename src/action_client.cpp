@@ -68,28 +68,18 @@ private:
 
 public:
   ros::NodeHandle n;
-  std::vector<ros::Publisher> pose_multiple_pub;
-  std::vector<ros::Publisher> data_multiple_pub;
-  ros::Publisher pose_pub;
-  ros::Publisher data_pub;
-  ros::Subscriber joint_state_sub;
   ros::Subscriber traj_sub;
   KDL::JntArray jointPosCurrent, jointVelCurrent, jointEffort;
-  Eigen::MatrixXf q_cur, qdot_cur;
 
   KDL::Tree mytree; KDL::Chain mychain;
   std::array<int, N_JOINT> map_joint_states;
-  std::array<float, N_JOINT> k_p;
-  std::array<float, N_JOINT> k_d;
   std::array<float, N_JOINT> desired_pose;
+  bool lastPoint =false;
 
   Ur3Arm()
   {
     jointPosCurrent.resize(N_JOINT), jointVelCurrent.resize(N_JOINT), jointEffort.resize(N_JOINT);
-    q_cur.resize(N_JOINT,1); qdot_cur.resize(N_JOINT,1); // setZero
     map_joint_states={2, 1, 0, 3, 4, 5};
-    k_p={16, 16, 16,  10,  10,  10};          // specify p and d gains
-    k_d={5, 5, 5,  6,  6,  6};
     desired_pose={0, -1.5, 2, 0, 0, 0};
 
     // BEGIN
@@ -135,17 +125,6 @@ public:
 
     traj_sub = n.subscribe("/opt_states", 100, &Ur3Arm::TrajCb, this);
     traj_client_ = new TrajClient("trajectory_action", true); // spin a thread by default
-    /*for (short int j = 0; j < N_JOINT; j++)
-    {
-      pose_pub = n.advertise<std_msgs::Float64>(tauTopicNames[j], 1);
-      pose_multiple_pub.push_back(pose_pub);
-    }
-
-    for (short int j = 0; j < 12; j++)
-    {
-      data_pub = n.advertise<std_msgs::Float64>(dataTopicNames[j], 1);
-      data_multiple_pub.push_back(data_pub);
-    }*/
 
     while(!traj_client_->waitForServer(ros::Duration(5.0)))
      {
@@ -168,7 +147,7 @@ public:
 
   void TrajCb(const jointspace::OptStatesWtConstPtr &msg2){
 
-    ROS_INFO("[AC] Reading OptStates");
+    ROS_INFO("[AC] Going Forward");
     Eigen::MatrixXf q_des(N_JOINT,1), qdot_des(N_JOINT,1), qddot_des(N_JOINT,1);
     ros_action_server::MyMsgGoal action;
     double time_ = 0.0;
@@ -177,14 +156,17 @@ public:
 
     for(short int k = 0; k < msg2->goal.size(); k++){
 
+      if (k == msg2->goal.size()-1){
+        lastPoint = true;}
+
       action.trajectory[k].angle_goal.data.resize(N_JOINT);
       action.trajectory[k].vel_goal.data.resize(N_JOINT);
       action.trajectory[k].acc_goal.data.resize(N_JOINT);
       time_ = k * 3.2/msg2->goal.size();
-      cout << "[AC] time_from_start: " << time_ << endl;
+      //cout << "[AC] time_from_start: " << time_ << endl;
 
-      action.trajectory[k].header.stamp = ros::Time::now();
-      action.trajectory[k].time_from_start = ros::Duration( time_ );  //  traj duration/nr. of points
+      //action.trajectory[k].header.stamp = ros::Time::now();
+      //action.trajectory[k].time_from_start = ros::Duration( time_ );  //  traj duration/nr. of points
 
 
       for (short int l=0; l< N_JOINT; l++){
@@ -193,17 +175,47 @@ public:
         qdot_des(l,0) = msg2->goal[k].qdot.data[l];
         qddot_des(l,0) = msg2->goal[k].qddot.data[l];
 
-        action.trajectory[k].angle_goal.data[l] = q_des(l,0); // Header and time from start
+        action.trajectory[k].angle_goal.data[l] = q_des(l,0);
         action.trajectory[k].vel_goal.data[l] = qdot_des(l,0);
         action.trajectory[k].acc_goal.data[l] = qddot_des(l,0);
       }
-      // time_from_start = Now () + time_
+
+      action.index.data = k;
+      action.trajectory[k].time_from_start = ros::Duration( time_ );  //  traj duration/nr. of points
+      action.trajectory[k].header.stamp = ros::Time::now();
+      //action.header.stamp = ros::Time::now() ; //time from start
+      traj_client_->sendGoalAndWait(action, ros::Duration(0,0), ros::Duration(0,0)); // wait for one point to finish
     }
 
-    action.header.stamp = ros::Time::now() ; //ros::Duration(0.001);
-    traj_client_->sendGoalAndWait(action, ros::Duration(0,0), ros::Duration(0,0)); // wait for entire traj to finish
-  }
+    if (lastPoint){
+      ROS_INFO("[AC] Going Reverse");
+      // reverse iterate the trajectory
 
+      for(short int k = msg2->goal.size()-1; k >= 0; k--){
+
+        action.trajectory[k].angle_goal.data.resize(N_JOINT);
+        action.trajectory[k].vel_goal.data.resize(N_JOINT);
+        action.trajectory[k].acc_goal.data.resize(N_JOINT);
+
+
+        for (short int l=0; l< N_JOINT; l++){
+
+          q_des(l,0) = msg2->goal[k].q.data[l];
+          qdot_des(l,0) = msg2->goal[k].qdot.data[l];
+          qddot_des(l,0) = msg2->goal[k].qddot.data[l];
+
+          action.trajectory[k].angle_goal.data[l] = q_des(l,0);
+          action.trajectory[k].vel_goal.data[l] = qdot_des(l,0);
+          action.trajectory[k].acc_goal.data[l] = qddot_des(l,0);
+        }
+
+        action.index.data = k;
+        action.trajectory[k].header.stamp = ros::Time::now();
+        traj_client_->sendGoalAndWait(action, ros::Duration(0,0), ros::Duration(0,0));
+      }
+      lastPoint = false;
+    }
+  }
 
   actionlib::SimpleClientGoalState getState() //! Returns the current state of the action
    {
