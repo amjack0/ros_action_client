@@ -83,30 +83,14 @@ public:
   std::array<float, N_JOINT> k_d;
   std::array<float, N_JOINT> desired_pose;
 
-/*
-  void JointStateCb(const sensor_msgs::JointStateConstPtr &msg)
-  {
-    for(short int l=0; l< N_JOINT; l++){
-
-      jointPosCurrent(l) = msg->position[map_joint_states[l]]; // joint_state
-      jointVelCurrent(l) = msg->velocity[map_joint_states[l]];
-      jointEffort(l) = msg->effort[map_joint_states[l]];
-      q_cur(l,0) = msg->position[map_joint_states[l]];
-      qdot_cur(l,0) = msg->velocity[map_joint_states[l]];
-    }
-    cout << "Callback angle:" << q_cur.transpose() << endl;
-    ROS_INFO("[AC] Reading joint_states");
-  }
-*/
-
   Ur3Arm()
   {
     jointPosCurrent.resize(N_JOINT), jointVelCurrent.resize(N_JOINT), jointEffort.resize(N_JOINT);
-    q_cur.resize(N_JOINT,1); qdot_cur.resize(N_JOINT,1); // TODO: setZero
+    q_cur.resize(N_JOINT,1); qdot_cur.resize(N_JOINT,1); // setZero
     map_joint_states={2, 1, 0, 3, 4, 5};
     k_p={16, 16, 16,  10,  10,  10};          // specify p and d gains
     k_d={5, 5, 5,  6,  6,  6};
-    desired_pose={1, -1.5, 2, 0, -1, 0};
+    desired_pose={0, -1.5, 2, 0, 0, 0};
 
     // BEGIN
     float mass = 5 ; double Ixx, Iyy, Izz; double l= 0.08, r = l/2.0; // from URDF
@@ -149,16 +133,9 @@ public:
       ROS_ERROR("[JS] ERROR in size of joint variables ! ");
     }
 
-    /*sub1.subscribe(n, "/joint_states", 100);   // urbot/joint_states
-    sub2.subscribe(n, "/opt_states", 100);
-    sync.reset(new Sync(MySyncPolicy(100), sub1, sub2));
-    sync->registerCallback(boost::bind(&Ur3Arm::callback, this, _1, _2));*/
-
-    //joint_state_sub = n.subscribe("/joint_states", 100, &Ur3Arm::JointStateCb, this);
     traj_sub = n.subscribe("/opt_states", 100, &Ur3Arm::TrajCb, this);
-
-
-    for (short int j = 0; j < N_JOINT; j++)
+    traj_client_ = new TrajClient("trajectory_action", true); // spin a thread by default
+    /*for (short int j = 0; j < N_JOINT; j++)
     {
       pose_pub = n.advertise<std_msgs::Float64>(tauTopicNames[j], 1);
       pose_multiple_pub.push_back(pose_pub);
@@ -168,9 +145,7 @@ public:
     {
       data_pub = n.advertise<std_msgs::Float64>(dataTopicNames[j], 1);
       data_multiple_pub.push_back(data_pub);
-    }
-
-    traj_client_ = new TrajClient("trajectory_action", true); // spin a thread by default
+    }*/
 
     while(!traj_client_->waitForServer(ros::Duration(5.0)))
      {
@@ -182,8 +157,6 @@ public:
     else {
       ROS_INFO("[AC] ros_action server is Not Connected !");
     }
-
-    //ros::Duration(30.0).sleep(); // Debug
     cout << "[AC] Constructed !" << endl;
   }
 
@@ -198,6 +171,7 @@ public:
     ROS_INFO("[AC] Reading OptStates");
     Eigen::MatrixXf q_des(N_JOINT,1), qdot_des(N_JOINT,1), qddot_des(N_JOINT,1);
     ros_action_server::MyMsgGoal action;
+    double time_ = 0.0;
 
     action.trajectory.resize(msg2->goal.size());
 
@@ -206,169 +180,30 @@ public:
       action.trajectory[k].angle_goal.data.resize(N_JOINT);
       action.trajectory[k].vel_goal.data.resize(N_JOINT);
       action.trajectory[k].acc_goal.data.resize(N_JOINT);
+      time_ = k * 3.2/msg2->goal.size();
+      cout << "[AC] time_from_start: " << time_ << endl;
+
+      action.trajectory[k].header.stamp = ros::Time::now();
+      action.trajectory[k].time_from_start = ros::Duration( time_ );  //  traj duration/nr. of points
+
 
       for (short int l=0; l< N_JOINT; l++){
 
-        q_des(l,0) = desired_pose[l];  //msg2->goal[k].q.data[l];       // opt_states
-        qdot_des(l,0) = 0;             //msg2->goal[k].qdot.data[l];
-        qddot_des(l,0) = 0;            //msg2->goal[k].qddot.data[l];
+        q_des(l,0) = msg2->goal[k].q.data[l];       // opt_states
+        qdot_des(l,0) = msg2->goal[k].qdot.data[l];
+        qddot_des(l,0) = msg2->goal[k].qddot.data[l];
 
-        action.trajectory[k].angle_goal.data[l] = q_des(l,0); // Header
+        action.trajectory[k].angle_goal.data[l] = q_des(l,0); // Header and time from start
         action.trajectory[k].vel_goal.data[l] = qdot_des(l,0);
         action.trajectory[k].acc_goal.data[l] = qddot_des(l,0);
       }
+      // time_from_start = Now () + time_
     }
 
-    action.header.stamp = ros::Time::now() + ros::Duration(0.001);
+    action.header.stamp = ros::Time::now() ; //ros::Duration(0.001);
     traj_client_->sendGoalAndWait(action, ros::Duration(0,0), ros::Duration(0,0)); // wait for entire traj to finish
-
-      // goes in server
-      /*dyn_param.JntToMass(jointPosCurrent, M);
-      dyn_param.JntToGravity(jointPosCurrent, gravity);
-      dyn_param.JntToCoriolis(jointPosCurrent, jointVelCurrent, C);
-
-      for(short int i = 0; i < N_JOINT; i++){
-
-        c(i,0) = C(i);
-        g(i,0) = gravity(i);
-        qdotdot_k(i,0)=k_p[i]*(angle(i,0)-q_cur(i,0))+k_d[i]*(velocity(i,0)-qdot_cur(i,0)); //prefer
-
-        for(int j = 0; j < N_JOINT; j++){
-          M_(i,j) = M(i,j);}
-      }
-
-      position_error = q_des ;//-q_cur;
-      velocity_error = qdot_des;//-qdot_cur;
-
-      tau = M_ * qdotdot_k + c + g;
-
-      cout << "Applid tau: " << tau.transpose() << ", Current tau:" << jointEffort.data.transpose() << endl;
-
-      for (short int j = 0; j < N_JOINT; j++)
-      {
-        msg_[j].data = tau(j,0);
-        pose_multiple_pub[j].publish(msg_[j]);  // publish torques to plot
-      }
-
-      for (short int j = 0; j < N_JOINT; j++)
-      {
-        msg_error[j].data = position_error(j,0);
-        msg_error[j+N_JOINT].data = velocity_error(j,0);
-        data_multiple_pub[j].publish(msg_error[j]);                 // publish position error to plot
-        data_multiple_pub[j+N_JOINT].publish(msg_error[j+N_JOINT]); // publish velocity error to plot
-      }
-
-      //TODO : also modify the q_des , qdot_des , qddot_des - inside code
-
-      ros_action_server::MyMsgGoal action;
-      //action.tau_traj.tau.data.resize(N_JOINT);
-
-
-      for (short int k =0; k< 10; k++){
-        for(size_t i = 0; i < N_JOINT; i++)
-        {
-          action.tau_traj[k].tau.data[i] = tau(i,0); //TODO torq(k) // publish torques to controller
-        }
-      }
-
-      action.time_from_start = ros::Duration(1.0);
-      //action.header.frame_id = "base_link";
-      action.header.stamp = ros::Time::now() + ros::Duration(0.001); // TODO: 0.001
-//    traj_client_->sendGoalAndWait(action, ros::Duration(0,0), ros::Duration(0,0));
-      traj_client_->sendGoal(action);
-      ROS_INFO("[AC] Reading TrajCb");
-    //} //!for loop
-
-      */
   }
 
-/*
-  void callback(const sensor_msgs::JointStateConstPtr &msg1, const jointspace::OptStatesWtConstPtr &msg2)
-  {
-    KDL::JntArray C(N_JOINT), gravity(N_JOINT);
-    Eigen::MatrixXf qdotdot_k(N_JOINT,1), c(N_JOINT,1), g(N_JOINT,1), M_(N_JOINT, N_JOINT), tau(N_JOINT,1);
-    KDL::JntSpaceInertiaMatrix M(N_JOINT);
-    KDL::ChainDynParam dyn_param(mychain, KDL::Vector(0, 0, -9.80665));
-    std::vector<std_msgs::Float64> msg_(N_JOINT);
-    std::vector<std_msgs::Float64> msg_error(12);
-    Eigen::MatrixXf position_error(N_JOINT,1);  Eigen::MatrixXf velocity_error(N_JOINT,1);
-
-
-    for(short int k = 0; k < msg2->goal.size(); k++){
-      for (short int l=0; l< N_JOINT; l++){
-
-        q_des(l,0) =  0;     //msg2->goal[k].q.data[l];          // opt_states
-        qdot_des(l,0) = 0;  //msg2->goal[k].qdot.data[l];
-        qddot_des(l,0) = 0; //msg2->goal[k].qddot.data[l];
-
-        jointPosCurrent(l) = msg1->position[map_joint_states[l]]; // joint_state
-        jointVelCurrent(l) = msg1->velocity[map_joint_states[l]];
-        jointEffort(l) = msg1->effort[map_joint_states[l]];
-        q_cur(l,0) = msg1->position[map_joint_states[l]];
-        qdot_cur(l,0) = msg1->velocity[map_joint_states[l]];
-
-        qdotdot_k(l,0)=k_p[l]*(q_des(l,0)-q_cur(l,0))+k_d[l]*(qdot_des(l,0)-qdot_cur(l,0)); //prefer
-
-        //qdotdot_k(l,0)=k_p[l]*(q_cur(l,0)-q_des(l,0))+k_d[l]*(qdot_cur(l,0)-qdot_des(l,0)) + qddot_des(l,0);
-      }
-
-      dyn_param.JntToMass(jointPosCurrent, M);
-      dyn_param.JntToGravity(jointPosCurrent, gravity);
-      dyn_param.JntToCoriolis(jointPosCurrent, jointVelCurrent, C);
-
-      for(short int i = 0; i < N_JOINT; i++){
-        c(i,0) = C(i); // TODO: C(i)*qdot_des(i,0) prefer
-        g(i,0) = gravity(i);
-        for(int j = 0; j < N_JOINT; j++){
-          M_(i,j) = M(i,j);}
-      }
-
-      position_error = q_des;//-q_cur;
-      velocity_error = qdot_des;//-qdot_cur;
-
-      tau = M_ * qdotdot_k + c + g;
-
-      cout << "Applid tau: " << tau.transpose() << ", Current tau:" << jointEffort.data.transpose() << endl;
-
-//      cout << "q_des: " << q_des.transpose() << endl;
-//      cout << "q_cur: " << q_cur.transpose() << endl;
-//      cout << "qdotdot_k: " << qdotdot_k.transpose() << endl;
-//      cout << "Position Error: " << position_error.transpose() << endl;
-
-      for (short int j = 0; j < N_JOINT; j++)
-      {
-        msg_[j].data = tau(j,0);
-        pose_multiple_pub[j].publish(msg_[j]);  // publish torques to plot
-      }
-
-      for (short int j = 0; j < N_JOINT; j++)
-      {
-        msg_error[j].data = position_error(j,0);
-        msg_error[j+N_JOINT].data = velocity_error(j,0);
-        data_multiple_pub[j].publish(msg_error[j]);                 // publish position error to plot
-        data_multiple_pub[j+N_JOINT].publish(msg_error[j+N_JOINT]); // publish velocity error to plot
-      }
-
-      ros_action_server::MyMsgGoal action;
-
-      //action.tau.layout.dim.resize(N_JOINT); // remove this line
-      action.tau.data.resize(N_JOINT);
-
-      for(size_t i = 0; i < N_JOINT; i++) //
-      {
-        action.tau.data[i] = tau(i,0); // publish torques to controller
-        //action.tau.data[i] = desired_torque[i]; // test
-      }
-
-      action.time_from_start = ros::Duration(1.0);
-      //action.header.frame_id = "base_link";
-      action.header.stamp = ros::Time::now() + ros::Duration(0.001); // TODO: 0.001
-      traj_client_->sendGoalAndWait(action, ros::Duration(0,0), ros::Duration(0,0));
-      //update joint state
-    } //!for loop
-  }   //!callback
-
-  */
 
   actionlib::SimpleClientGoalState getState() //! Returns the current state of the action
    {
