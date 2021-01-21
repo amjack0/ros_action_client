@@ -14,7 +14,7 @@
 #include <kdl/tree.hpp>
 #include <kdl/chain.hpp>
 #include <kdl/jntspaceinertiamatrix.hpp>
-#include <std_msgs/Float64.h>//
+#include <std_msgs/Float64.h>
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
@@ -42,29 +42,6 @@ class Ur3Arm
 {
 private:
   TrajClient* traj_client_;
-  std::string tauTopicNames[N_JOINT] = {
-    "tau_1",
-    "tau_2",
-    "tau_3",
-    "tau_4",
-    "tau_5",
-    "tau_6",
-  };
-  std::string dataTopicNames[12] = {
-    "pose_error_1",
-    "pose_error_2",
-    "pose_error_3",
-    "pose_error_4",
-    "pose_error_5",
-    "pose_error_6",
-    "velo_error_1",
-    "velo_error_2",
-    "velo_error_3",
-    "velo_error_4",
-    "velo_error_5",
-    "velo_error_6",
-  };
-
 
 public:
   ros::NodeHandle n;
@@ -80,7 +57,7 @@ public:
   {
     jointPosCurrent.resize(N_JOINT), jointVelCurrent.resize(N_JOINT), jointEffort.resize(N_JOINT);
     map_joint_states={2, 1, 0, 3, 4, 5};
-    desired_pose={0, -1.5, 2, 0, 0, 0};
+    desired_pose={1, -1.5, 2, -2.5, -0.5, 0};
 
     // BEGIN
     float mass = 5 ; double Ixx, Iyy, Izz; double l= 0.08, r = l/2.0; // from URDF
@@ -157,16 +134,13 @@ public:
     for(short int k = 0; k < msg2->goal.size(); k++){
 
       if (k == msg2->goal.size()-1){
-        lastPoint = true;}
+        lastPoint = true;
+        action.finished = true;}
 
       action.trajectory[k].angle_goal.data.resize(N_JOINT);
       action.trajectory[k].vel_goal.data.resize(N_JOINT);
       action.trajectory[k].acc_goal.data.resize(N_JOINT);
       time_ = k * 3.2/msg2->goal.size();
-      //cout << "[AC] time_from_start: " << time_ << endl;
-
-      //action.trajectory[k].header.stamp = ros::Time::now();
-      //action.trajectory[k].time_from_start = ros::Duration( time_ );  //  traj duration/nr. of points
 
 
       for (short int l=0; l< N_JOINT; l++){
@@ -183,14 +157,13 @@ public:
       action.index.data = k;
       action.trajectory[k].time_from_start = ros::Duration( time_ );  //  traj duration/nr. of points
       action.trajectory[k].header.stamp = ros::Time::now();
-      //action.header.stamp = ros::Time::now() ; //time from start
       traj_client_->sendGoalAndWait(action, ros::Duration(0,0), ros::Duration(0,0)); // wait for one point to finish
     }
 
     if (lastPoint){
       ROS_INFO("[AC] Going Reverse");
+      action.finished = false;
       // reverse iterate the trajectory
-
       for(short int k = msg2->goal.size()-1; k >= 0; k--){
 
         action.trajectory[k].angle_goal.data.resize(N_JOINT);
