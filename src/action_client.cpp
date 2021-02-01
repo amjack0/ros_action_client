@@ -131,7 +131,7 @@ public:
 
     action.trajectory.resize(msg2->goal.size());
 
-    for(short int k = 0; k < msg2->goal.size(); k++){
+    for(unsigned int k = 0; k < msg2->goal.size(); k++){
 
       if (k == msg2->goal.size()-1){
         lastPoint = true;
